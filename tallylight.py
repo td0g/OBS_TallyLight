@@ -10,14 +10,16 @@ import itertools
 from multiping import MultiPing
 import socket
 logging.basicConfig(level=logging.INFO)
-
-
 sys.path.append('../')
 from obswebsocket import obsws, events, requests  # noqa: E402
 
-port = 4444
-password = "123456"
+############## User Configuration ###############
+port = 4444 #Should be 4444
+password = "123456" #Change to a unique password.  Use the same password in OBS -> Tools -> Websockets Server Settings -> Password
+trigger_char = "+" #If this character is found in the scene name then tally light will illuminate
 
+
+############## Script ###############
 ipAddressHistory = open("obsAddr.log","r")
 host = ipAddressHistory.readline()
 ipAddressHistory.close()
@@ -65,7 +67,7 @@ def on_event(message):
 def on_switch(message):
     global LEDstate
     print(u"You changed the scene to {}".format(message.getSceneName()))
-    if format(message.getSceneName()).find("+") > -1:
+    if format(message.getSceneName()).find(trigger_char) > -1:
             GPIO.output(13, 1)
             print("   LED ON")
             LEDstate = 1
@@ -95,7 +97,7 @@ try:
                     ipAddressHistory = open("obsAddr.log","w")
                     ipAddressHistory.write(addr)
                     ipAddressHistory.close()
-                    if sn.find("+") > -1:
+                    if sn.find(trigger_char) > -1:
                       GPIO.output(13, 1)
                       print("   LED ON")
                       LEDstate = 1
