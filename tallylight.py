@@ -68,11 +68,11 @@ def on_switch(message):
     global LEDstate
     print(u"You changed the scene to {}".format(message.getSceneName()))
     if format(message.getSceneName()).find(trigger_char) > -1:
-            GPIO.output(13, 1)
+            GPIO.output(26, 1) #https://raspberrypi.stackexchange.com/questions/12966/what-is-the-difference-between-board-and-bcm-for-gpio-pin-numbering
             print("   LED ON")
             LEDstate = 1
     else:
-            GPIO.output(13, 0)
+            GPIO.output(26, 0)
             print("   LED OFF")
             LEDstate = 0
 
@@ -82,7 +82,7 @@ GPIO.output(16, GPIO.HIGH)
 connected = False
 try:
     LEDstate = 0
-    GPIO.setup(13, GPIO.OUT)
+    GPIO.setup(26, GPIO.OUT)
     while 1:
             addr = find_open_socket()
             if addr != "":
@@ -98,7 +98,7 @@ try:
                     ipAddressHistory.write(addr)
                     ipAddressHistory.close()
                     if sn.find(trigger_char) > -1:
-                      GPIO.output(13, 1)
+                      GPIO.output(26, 1)
                       print("   LED ON")
                       LEDstate = 1
             while connected:
@@ -112,18 +112,18 @@ try:
                     GPIO.output(16, GPIO.HIGH)
                     time.sleep(0.02)
             try:
-                GPIO.output(13, 0)
+                GPIO.output(26, 0)
                 ws.disconnect()
             except:
                 pass
             time.sleep(2)
 
 except KeyboardInterrupt:
-    GPIO.output(13, 0)
+    GPIO.output(26, 0)
     try:
       ws.disconnect()
     except:
       pass
 
-GPIO.output(13, 0)
+GPIO.output(26, 0)
 GPIO.cleanup()
