@@ -30,7 +30,7 @@ import socket
 logFileName = '/home/pi/tally_'+str(time.strftime("%Y-%m-%d"))+'.log'
 
   #Set the GPIO Pins
-tallyLightGPIO = 13
+tallyLightGPIO = 26
 statusLightGPIO = 16
 
   #Set the trigger character
