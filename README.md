@@ -6,7 +6,7 @@
 
 Please see https://td0g.ca/2020/05/27/simple-tally-light-for-obs-studio/
 
-Note - If 2.4GHz WiFi is not available, I would recommend the Raspberry Pi 3B for 5GHz Wifi.  I haven't found a more affordable solution.
+Note - If 2.4GHz WiFi is not available, I would recommend the Raspberry Pi 3B+ (Not the 3B) for 5GHz Wifi.  I haven't found a more affordable solution.
 
 ### Configuration
 
