@@ -14,10 +14,13 @@
 #1.2	2020-08-14
 #	If no communication has occurred in the past 30 seconds, pings to make sure connection still exists
 #	If no connection, resets WiFi
+#1.3    2020-08-26
+#   Code cleanup, easier to read
+#   Current scene name request timeout after 2 seconds
+#   Fixed logging to wrong date file issue
 
 
 #ToDo
-#	MultiPing seems to miss some PC's occasionally
 #	Fade to black transition will turn on Tally Light if a scene with the trigger char is loaded in preview
 
 import sys
@@ -29,13 +32,17 @@ import itertools
 from multiping import MultiPing
 import socket
 import os
+import threading
+import signal
+
+todaysDate = str(time.strftime("%Y-%m-%d"))
 
   #Comment out all but one of the following logFileNames.  The first will put all logs into a single file.  The second will create a new logfile for each day.
 #logFileName = '/home/pi/tally.log'
-logFileName = '/home/pi/tally_'+str(time.strftime("%Y-%m-%d"))+'.log'
+logFileName = '/home/pi/tally_'+ todaysDate +'.log'
 
   #Set the GPIO Pins
-tallyLightGPIO = 26
+tallyLightGPIO = 13
 statusLightGPIO = 16
 
   #Set the trigger character
@@ -43,19 +50,50 @@ triggerChar = '+'
 
   #Set the number of seconds of no ping response before resetting
 resetSeconds = 120 #Minimum 40 seconds
+beginPingSeconds = 1
+
+
+  #Set the websocket port (Should be 4444) and password (set in OBS Studio)
+port = 4444
+password = "123456"
+
+def setLogger(fname):
+#https://stackoverflow.com/questions/12158048/changing-loggings-basicconfig-which-is-already-set
+  for handler in logging.root.handlers[:]:
+    logging.root.removeHandler(handler)
+  logging.basicConfig(filename=logFileName,level=logging.DEBUG, format='%(asctime)s %(name)-12s %(levelname)-8s %(message)s',  datefmt='%y-%m-%d %H:%M:%S %Z')
+  print("Logging to: " + logFileName)
 
   #Initialize logging
-logging.basicConfig(filename=logFileName,level=logging.DEBUG, format='%(asctime)s %(name)-12s %(levelname)-8s %(message)s',  datefmt='%y-%m-%d %H:%M:%S %Z')
+setLogger(logFileName)
 logging.debug('Tally Light BOOTED')
-print("Logging to: " + logFileName)
 
   #Not sure what this does...
 sys.path.append('../')
 from obswebsocket import obsws, events, requests  # noqa: E402
 
-  #Set the websocket port (Should be 4444) and password (set in OBS Studio)
-port = 4444
-password = "123456"
+
+  #Timeout management
+#@contextmanager
+#def timeout(time):
+#    # Register a function to raise a TimeoutError on the signal.
+#    signal.signal(signal.SIGALRM, raise_timeout)
+#    # Schedule the signal to be sent after ``time``.
+#    signal.alarm(time)#
+#
+#    try:
+#        yield
+#    except TimeoutError:
+#        pass
+#    finally:
+        # Unregister the signal so it won't be triggered
+        # if the timeout is not reached.
+#        signal.signal(signal.SIGALRM, signal.SIG_IGN)
+
+
+#def raise_timeout(signum, frame):
+#    raise TimeoutError
+
 
   #Try load last good IP address
 lastKnownOBSStudioIP = ""
@@ -72,6 +110,24 @@ except:
 #Keep track of last communication time
 lastCommunicationTime = time.time()
 
+def delayBlinkLED(count):
+  count *= 2
+  while count:
+    GPIO.output(statusLightGPIO, GPIO.LOW)
+    time.sleep(0.25)
+    GPIO.output(statusLightGPIO, GPIO.HIGH)
+    time.sleep(0.25)
+    count -= 1
+
+def fastBlink(count):
+  while(count):
+    GPIO.output(statusLightGPIO, GPIO.LOW)
+    time.sleep(0.98)
+    GPIO.output(statusLightGPIO, GPIO.HIGH)
+    time.sleep(0.02)
+    count -= 1
+
+
 #Shutdown and restart WiFi
 def resetWiFi():
     logging.debug("Shutting down WiFi")
@@ -79,20 +135,13 @@ def resetWiFi():
     cmd = 'ifconfig wlan0 down'
     os.system(cmd)
     print("Bringing up WiFi in 5")
-    time.sleep(1)
-    print("4")
-    time.sleep(1)
-    print("3")
-    time.sleep(1)
-    print("2")
-    time.sleep(1)
-    print("1")
-    time.sleep(1)
+    delayBlinkLED(5)
     print("Now!")
     logging.debug("Bringing up WiFi")
     cmd = 'ifconfig wlan0 up'
     os.system(cmd)
-    time.sleep(5)
+    delayBlinkLED(5)
+    
 
 #Returns tuple of available IP addresses
 def scan_all_ip():
@@ -167,6 +216,28 @@ def find_open_socket():
           return addr
   return ""
 
+def signal_handler(signum, frame):
+    raise Exception("Timed out!")
+    
+def requestCurrentSceneName():
+  global currentSceneName, lastCommnunicationTime 
+  message = ""
+  signal.signal(signal.SIGALRM, signal_handler)
+  signal.alarm(2)
+  print("Requesting current scene name - ",end="")
+  try:
+    message = ws.call(requests.GetCurrentScene())
+    currentSceneName = getSceneName(message)
+    print("Response: " + currentSceneName)
+    logging.debug("Current scene name: " + currentSceneName)
+    lastCommunicationTime = time.time()
+  except:
+    print("No response!")
+    logging.debug("No response to current scene name request!")
+  signal.signal(signal.SIGALRM, signal.SIG_IGN)
+  signal.alarm(0)
+  
+
 #Function called if any Websocket Message rec'd
 def on_event(message):
   global connected, lastCommunicationTime
@@ -179,19 +250,11 @@ def on_event(message):
 
 #Function called if scene changed
 def on_switch(message):
-  global LEDstate, lastCommunicationTime
+  global LEDstate, lastCommunicationTime, currentSceneName
   logging.debug(u"Scene Changed To {}".format(message.getSceneName()))
   lastCommunicationTime = time.time()
-  if format(message.getSceneName()).find(triggerChar) > -1:
-    GPIO.output(tallyLightGPIO, 1)
-    logging.debug("LED ON")
-    print("LED ON")
-    LEDstate = 1
-  else:
-    GPIO.output(tallyLightGPIO, 0)
-    logging.debug("LED OFF")
-    print("LED OFF")
-    LEDstate = 0
+  currentSceneName = format(message.getSceneName())
+  setLEDfromSceneName()
 
 #Parses scene name from websocket message
 def getSceneName(message):
@@ -206,95 +269,93 @@ def saveGoodIP(addr):
   ipAddressHistory.write(addr)
   ipAddressHistory.close()
 
+def setLEDfromSceneName():
+  global currentSceneName, LEDstate
+  if currentSceneName.find(triggerChar) > -1:
+    GPIO.output(tallyLightGPIO, 1)
+    logging.debug("LED ON")
+    print("LED ON")
+    LEDstate = 1
+  else:
+    GPIO.output(tallyLightGPIO, 0)
+    logging.debug("LED OFF")
+    print("LED OFF")
+    LEDstate = 0
+
 
 #Setup GPIO pins
 GPIO.setmode(GPIO.BCM)
 GPIO.setup(statusLightGPIO, GPIO.OUT)
 GPIO.output(statusLightGPIO, GPIO.HIGH)
+GPIO.setup(tallyLightGPIO, GPIO.OUT)
 
-#Begin attempting to find and connect to OBS Studio
 connected = False
+LEDstate = 0
+currentSceneName = ""
 try:
-    LEDstate = 0
-    GPIO.setup(tallyLightGPIO, GPIO.OUT)
     while 1:
-            addr = find_open_socket()	#Get the address of OBS Studio
-            if addr != "":	#If OBS Studio found
-                    ws = obsws(addr, port, password)
-                    ws.register(on_event)
-                    ws.register(on_switch, events.SwitchScenes)
-                    try:
-                      ws.connect()
-                      message = ws.call(requests.GetCurrentScene())
-                      lastCommunicationTime = time.time()
-                      currentSceneName = getSceneName(message)
-                      logging.debug("Current Scene Name: " + currentSceneName)
-                      print("Current Scene Name: " + currentSceneName)
-                      connected = True
-                      saveGoodIP(addr)
-                      if currentSceneName.find(triggerChar) > -1:
-                        GPIO.output(tallyLightGPIO, 1)
-                        logging.debug("LED ON")
-                        print("LED ON")
-                        LEDstate = 1
-                    except:
-                      logging.debug("Connection Refused")
-                      print("Connection Refused")
-
-            while connected:	#blink status LED once for connected, twice for connected and Tally Light ON
-                if lastCommunicationTime + 30 < time.time():
+#Begin attempting to find and connect to OBS Studio
+        addr = find_open_socket()	#Get the address of OBS Studio
+        if addr != "":	#If OBS Studio found
+          ws = obsws(addr, port, password)
+          ws.register(on_event)
+          ws.register(on_switch, events.SwitchScenes)
+          try:
+            ws.connect()
+            requestCurrentSceneName()
+            setLEDfromSceneName()
+            connected = True
+            saveGoodIP(addr)
+            if todaysDate != str(time.strftime("%Y-%m-%d")):
+              print("Wrong logfile date!! Changing from " + todaysDate + " to " + str(time.strftime("%Y-%m-%d")))
+              logging.debug("Wrong logfile date!! Changing from " + todaysDate + " to " + str(time.strftime("%Y-%m-%d")))
+            if logFileName != '/home/pi/tally.log':
+              todaysDate = str(time.strftime("%Y-%m-%d"))
+              logFileName = '/home/pi/tally_'+ todaysDate +'.log'
+              setLogger(logFileName)
+          except:
+            logging.debug("Connection Refused")
+            print("Connection Refused")
+#Connected!  
+        while connected:	#blink status LED once for connected, twice for connected and Tally Light ON
+                if lastCommunicationTime + beginPingSeconds < time.time():
                   logging.debug("Haven't heard from OBS in a while... Pinging!")
-                  print("Haven't heard from OBS in a while... Pinging!")
+                  print("Haven't heard from OBS in a while... Pinging!")   
                   if pingHost(addr):
-                    lastCommunicationTime = time.time()
+                    requestCurrentSceneName()
+                    setLEDfromSceneName()
                   else:
                     time.sleep(2)
                     if lastCommunicationTime + resetSeconds < time.time():
-					
                       logging.debug("TIMEOUT!!!")
                       print("TIMEOUT!!!")
                       resetWiFi()
                       connected = False
-                GPIO.output(statusLightGPIO, GPIO.LOW)
-                time.sleep(0.98)
-                GPIO.output(statusLightGPIO, GPIO.HIGH)
-                time.sleep(0.02)
-                if lastCommunicationTime + 60 < time.time():
-                    GPIO.output(statusLightGPIO, GPIO.LOW)
-                    time.sleep(0.2)
-                    GPIO.output(statusLightGPIO, GPIO.HIGH)
-                    time.sleep(0.02)
-                    GPIO.output(statusLightGPIO, GPIO.LOW)
-                    time.sleep(0.2)
-                    GPIO.output(statusLightGPIO, GPIO.HIGH)
-                    time.sleep(0.02)
-                    GPIO.output(statusLightGPIO, GPIO.LOW)
-                    time.sleep(0.2)
-                    GPIO.output(statusLightGPIO, GPIO.HIGH)
-                    time.sleep(0.02)
+                if lastCommunicationTime + resetSeconds / 2 < time.time():
+                  fastBlink(4)
                 elif LEDstate == 1:
-                    GPIO.output(statusLightGPIO, GPIO.LOW)
-                    time.sleep(0.2)
-                    GPIO.output(statusLightGPIO, GPIO.HIGH)
-                    time.sleep(0.02)
-            try:
-                GPIO.output(tallyLightGPIO, 0)
-                ws.disconnect()
-            except:
-                pass
-            logging.debug("Could not find OBS Studio - Waiting 2 seconds and re-attempting")
-            print("Could not find OBS Studio - Waiting 2 seconds and re-attempting")
+                  fastBlink(2)
+                else:
+                  fastBlink(1)
+#Connection failed (or OBS studio not found!)
+        try:
+          GPIO.output(tallyLightGPIO, 0)
+          ws.disconnect()
+        except:
+          pass
+        logging.debug("Could not find OBS Studio - Waiting 2 seconds and re-attempting")
+        print("Could not find OBS Studio - Waiting 2 seconds and re-attempting")
+        time.sleep(2)
 
-            print(lastCommunicationTime)
-            time.sleep(2)
-
-except KeyboardInterrupt: #End loop
+#Script stopped by ctl-C
+except KeyboardInterrupt: 
     GPIO.output(tallyLightGPIO, 0)
     try:
       ws.disconnect()
     except:
       pass
 
+#Cleanup
 logging.debug("Shutting Down")
 print("Shutting Down")
 GPIO.output(tallyLightGPIO, 0)
