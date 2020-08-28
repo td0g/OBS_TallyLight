@@ -46,7 +46,7 @@ todaysDate = str(time.strftime("%Y-%m-%d"))
 logFileName = '/home/pi/tally_'+ todaysDate +'.log'
 
   #Set the GPIO Pins
-tallyLightGPIO = 13
+tallyLightGPIO = 26
 statusLightGPIO = 16
 
   #Set the trigger character
