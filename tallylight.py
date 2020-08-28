@@ -23,6 +23,8 @@
 #ToDo
 #	Fade to black transition will turn on Tally Light if a scene with the trigger char is loaded in preview
 
+#make sure to pip3 install multiping socket thread signal
+
 import sys
 import time
 import RPi.GPIO as GPIO
@@ -32,10 +34,12 @@ import itertools
 from multiping import MultiPing
 import socket
 import os
-import threading
 import signal
 
 todaysDate = str(time.strftime("%Y-%m-%d"))
+
+
+#################### Setup ##################
 
   #Comment out all but one of the following logFileNames.  The first will put all logs into a single file.  The second will create a new logfile for each day.
 #logFileName = '/home/pi/tally.log'
@@ -52,10 +56,13 @@ triggerChar = '+'
 resetSeconds = 120 #Minimum 40 seconds
 beginPingSeconds = 1
 
-
   #Set the websocket port (Should be 4444) and password (set in OBS Studio)
 port = 4444
 password = "123456"
+
+
+
+#################### Functions ##################
 
 def setLogger(fname):
 #https://stackoverflow.com/questions/12158048/changing-loggings-basicconfig-which-is-already-set
@@ -72,29 +79,6 @@ logging.debug('Tally Light BOOTED')
 sys.path.append('../')
 from obswebsocket import obsws, events, requests  # noqa: E402
 
-
-  #Timeout management
-#@contextmanager
-#def timeout(time):
-#    # Register a function to raise a TimeoutError on the signal.
-#    signal.signal(signal.SIGALRM, raise_timeout)
-#    # Schedule the signal to be sent after ``time``.
-#    signal.alarm(time)#
-#
-#    try:
-#        yield
-#    except TimeoutError:
-#        pass
-#    finally:
-        # Unregister the signal so it won't be triggered
-        # if the timeout is not reached.
-#        signal.signal(signal.SIGALRM, signal.SIG_IGN)
-
-
-#def raise_timeout(signum, frame):
-#    raise TimeoutError
-
-
   #Try load last good IP address
 lastKnownOBSStudioIP = ""
 try:
@@ -110,6 +94,7 @@ except:
 #Keep track of last communication time
 lastCommunicationTime = time.time()
 
+#2hz Long Blink
 def delayBlinkLED(count):
   count *= 2
   while count:
@@ -119,6 +104,7 @@ def delayBlinkLED(count):
     time.sleep(0.25)
     count -= 1
 
+#1hz Fast Blink
 def fastBlink(count):
   while(count):
     GPIO.output(statusLightGPIO, GPIO.LOW)
@@ -126,7 +112,6 @@ def fastBlink(count):
     GPIO.output(statusLightGPIO, GPIO.HIGH)
     time.sleep(0.02)
     count -= 1
-
 
 #Shutdown and restart WiFi
 def resetWiFi():
@@ -161,7 +146,8 @@ def scan_all_ip():
   for addr, rtt in responses.items():
   	logging.debug ("%s responded in %f seconds" % (addr, rtt))
   return responses
-  
+
+#Ping a target IP
 def pingHost(ipToPing):
   p = []
   p.append(ipToPing)
@@ -181,7 +167,7 @@ def pingHost(ipToPing):
     print("Ping " + ipToPing + ": No Response")
   return False
 	
-#Returns IP of OBS Studio (or "" if OBS Studio not found
+#Returns IP of OBS Studio (or "" if OBS Studio not found)
 def find_open_socket():
   global lastCommunicationTime
   prefferedIP = ""
@@ -218,7 +204,8 @@ def find_open_socket():
 
 def signal_handler(signum, frame):
     raise Exception("Timed out!")
-    
+
+#Asks OBS Studio for current scene name, times out after 2 seconds
 def requestCurrentSceneName():
   global currentSceneName, lastCommnunicationTime 
   message = ""
@@ -236,7 +223,6 @@ def requestCurrentSceneName():
     logging.debug("No response to current scene name request!")
   signal.signal(signal.SIGALRM, signal.SIG_IGN)
   signal.alarm(0)
-  
 
 #Function called if any Websocket Message rec'd
 def on_event(message):
@@ -264,11 +250,16 @@ def getSceneName(message):
 
 #Saves IP address to file for next time
 def saveGoodIP(addr):
-  logging.debug("Saved new OBS Studio IP: " + str(addr))
-  ipAddressHistory = open("obsAddr.log","w+")
-  ipAddressHistory.write(addr)
-  ipAddressHistory.close()
+  try:
+    ipAddressHistory = open("obsAddr.log","w+")
+    ipAddressHistory.write(addr)
+    ipAddressHistory.close()
+    logging.debug("Saved new OBS Studio IP: " + str(addr))
+  except:
+    pass
+  lastKnownOBSStudioIP = str(addr)
 
+#Sets the LED status from the scene name
 def setLEDfromSceneName():
   global currentSceneName, LEDstate
   if currentSceneName.find(triggerChar) > -1:
@@ -282,7 +273,7 @@ def setLEDfromSceneName():
     print("LED OFF")
     LEDstate = 0
 
-
+#################### Main Loop ##################
 #Setup GPIO pins
 GPIO.setmode(GPIO.BCM)
 GPIO.setup(statusLightGPIO, GPIO.OUT)
