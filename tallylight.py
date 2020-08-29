@@ -18,6 +18,7 @@
 #   Code cleanup, easier to read
 #   Current scene name request timeout after 2 seconds
 #   Fixed logging to wrong date file issue
+#   If GPIO pins are already configured, user is given a chance to stop script
 
 
 #ToDo
@@ -37,7 +38,6 @@ import os
 import signal
 
 todaysDate = str(time.strftime("%Y-%m-%d"))
-
 
 #################### Setup ##################
 
@@ -96,22 +96,27 @@ lastCommunicationTime = time.time()
 
 #2hz Long Blink
 def delayBlinkLED(count):
-  count *= 2
-  while count:
-    GPIO.output(statusLightGPIO, GPIO.LOW)
-    time.sleep(0.25)
-    GPIO.output(statusLightGPIO, GPIO.HIGH)
-    time.sleep(0.25)
-    count -= 1
+    count *= 2
+    while count:
+      GPIO.output(statusLightGPIO, GPIO.LOW)
+      time.sleep(0.25)
+      GPIO.output(statusLightGPIO, GPIO.HIGH)
+      time.sleep(0.25)
+      count -= 1
 
-#1hz Fast Blink
+#4hz Fast Blink
+nextBlink = 0
 def fastBlink(count):
-  while(count):
-    GPIO.output(statusLightGPIO, GPIO.LOW)
-    time.sleep(0.98)
-    GPIO.output(statusLightGPIO, GPIO.HIGH)
-    time.sleep(0.02)
-    count -= 1
+  global nextBlink
+  if time.time() > nextBlink:
+    nextBlink = time.time() + 2
+    while(count):
+      GPIO.output(statusLightGPIO, GPIO.HIGH)
+      time.sleep(0.02)
+      GPIO.output(statusLightGPIO, GPIO.LOW)
+      if count > 1:
+        time.sleep(0.23)
+      count -= 1
 
 #Shutdown and restart WiFi
 def resetWiFi():
@@ -207,7 +212,7 @@ def signal_handler(signum, frame):
 
 #Asks OBS Studio for current scene name, times out after 2 seconds
 def requestCurrentSceneName():
-  global currentSceneName, lastCommnunicationTime 
+  global currentSceneName, lastCommunicationTime 
   message = ""
   signal.signal(signal.SIGALRM, signal_handler)
   signal.alarm(2)
@@ -275,7 +280,17 @@ def setLEDfromSceneName():
 
 #################### Main Loop ##################
 #Setup GPIO pins
+
 GPIO.setmode(GPIO.BCM)
+if GPIO.gpio_function(statusLightGPIO) == 0:
+  print('WARNING!!!!!!')
+  print('GPIO pins are already in use!!!')
+  print('Please press ctl-C immediately to stop script!')
+  time.sleep(1)
+  print('You have 8 seconds to comply')
+  time.sleep(2)
+  print('Yes, this is Dredd :)')
+  time.sleep(5)
 GPIO.setup(statusLightGPIO, GPIO.OUT)
 GPIO.output(statusLightGPIO, GPIO.HIGH)
 GPIO.setup(tallyLightGPIO, GPIO.OUT)
@@ -300,18 +315,19 @@ try:
             if todaysDate != str(time.strftime("%Y-%m-%d")):
               print("Wrong logfile date!! Changing from " + todaysDate + " to " + str(time.strftime("%Y-%m-%d")))
               logging.debug("Wrong logfile date!! Changing from " + todaysDate + " to " + str(time.strftime("%Y-%m-%d")))
-            if logFileName != '/home/pi/tally.log':
-              todaysDate = str(time.strftime("%Y-%m-%d"))
-              logFileName = '/home/pi/tally_'+ todaysDate +'.log'
-              setLogger(logFileName)
+              if logFileName != '/home/pi/tally.log':
+                todaysDate = str(time.strftime("%Y-%m-%d"))
+                logFileName = '/home/pi/tally_'+ todaysDate +'.log'
+                setLogger(logFileName)
+                logging.debug("WAS logging to wrong logfile date!! Changed from " + todaysDate + " to " + str(time.strftime("%Y-%m-%d")))
           except:
             logging.debug("Connection Refused")
             print("Connection Refused")
 #Connected!  
         while connected:	#blink status LED once for connected, twice for connected and Tally Light ON
                 if lastCommunicationTime + beginPingSeconds < time.time():
-                  logging.debug("Haven't heard from OBS in a while... Pinging!")
-                  print("Haven't heard from OBS in a while... Pinging!")   
+                  logging.debug("Haven't heard from OBS in " + str(time.time()-lastCommunicationTime) + " seconds, Pinging!")
+                  print("Haven't heard from OBS in " + str(time.time()-lastCommunicationTime) + " seconds, Pinging!")   
                   if pingHost(addr):
                     requestCurrentSceneName()
                     setLEDfromSceneName()
